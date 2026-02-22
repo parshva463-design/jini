@@ -1,0 +1,91 @@
+name: 🤖 Build JINI APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90   # increased — KivyMD builds can take longer
+
+    steps:
+      # ── 1. Checkout code ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python 3.10 ───────────────────────────────────────────────
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # ── 3. Install system dependencies ──────────────────────────────────────
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            openjdk-17-jdk \
+            git zip unzip wget curl \
+            libffi-dev libssl-dev python3-dev \
+            build-essential autoconf libtool pkg-config \
+            cmake ccache lld clang \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libportmidi-dev libswscale-dev libavformat-dev libavcodec-dev \
+            libgstreamer1.0-dev gstreamer1.0-plugins-base \
+            libltdl-dev libpq-dev \
+            zlib1g-dev
+
+      # ── 4. Install Python build tools ───────────────────────────────────────
+      - name: Install buildozer & cython
+        run: |
+          pip install --upgrade pip wheel setuptools
+          pip install buildozer==1.5.0 cython==0.29.37 virtualenv
+
+      # ── 5. Cache Android SDK / NDK / buildozer downloads ───────────────────
+      - name: Cache buildozer global directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      # ── 6. Accept Android SDK licenses ──────────────────────────────────────
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p ~/.android
+          echo "# AUTO" > ~/.android/repositories.cfg
+          # Pre-accept licenses so buildozer doesn't hang waiting for input
+          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+
+      # ── 7. Build the APK ────────────────────────────────────────────────────
+      - name: Build APK with Buildozer
+        run: |
+          buildozer -v android debug 2>&1
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      # ── 8. Upload APK as artifact ───────────────────────────────────────────
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JINI-APK
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── 9. Upload build log on failure (for debugging) ──────────────────────
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: |
+            .buildozer/android/platform/build-*/dists/jini/build.log
+            ~/.buildozer/logs/
+          retention-days: 7
